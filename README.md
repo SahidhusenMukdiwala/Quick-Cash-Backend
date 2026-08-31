@@ -1,2 +1,9 @@
-# Quick-Cash-Backend
-Enterprise Node.js &amp; Express REST API backend for QuickCash Ledger, connected to Aiven MySQL. Features JWT authentication, transaction CRUD services, client IP tracking, standardized response schemas, and audit logging.
+# ⚙️ QuickCash Ledger - Backend API
+
+The RESTful backend service for QuickCash Ledger, powered by **Node.js**, **Express.js**, and an **Aiven MySQL** cloud database.
+
+### ✨ Highlights
+- 🔐 **JWT Session Authentication**: Secure token verification and session middleware.
+- 💼 **Transaction Management API**: Optimized endpoints for transaction creation, updates, and balance aggregation.
+- 🌐 **IP & Audit Logging**: Automatic client public IP capture via `x-forwarded-for` and session activity tracking.
+- 🛡️ **Robust Error Handling**: Standardized JSON response envelope schemas (`success`, `result`, `errors`).
