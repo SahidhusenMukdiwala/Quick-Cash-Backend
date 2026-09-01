@@ -65,8 +65,8 @@ if (process.env.NODE_ENV === 'development') {
   app.use(morgan('combined'));
 }
 
-// Health Check Endpoint
-app.get('/health', (req, res) => {
+// Root & Health Check Endpoints (Handles GET and Render's HEAD / health check probes)
+app.get(['/', '/health'], (req, res) => {
   res.status(200).json({
     status: 'success',
     message: 'QuickCash Ledger API is healthy and operational',
