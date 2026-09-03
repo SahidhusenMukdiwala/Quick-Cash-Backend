@@ -81,14 +81,20 @@ export const getAllTransactions = async (queryParams = {}) => {
     FROM transactions
     ${whereSql}
   `;
-  const dataQuery = `
+  const isExport = queryParams.export === 'true' || queryParams.is_export === 'true';
+
+  let dataQuery = `
     SELECT id, type, paid_to, amount, payment_mode, remark, transaction_date, is_deleted, createdAt, updatedAt
     FROM transactions
     ${whereSql}
     ORDER BY transaction_date DESC, id DESC
-    LIMIT ? OFFSET ?
   `;
-  const dataValues = [...values, limitNum, offset];
+  let dataValues = [...values];
+
+  if (!isExport) {
+    dataQuery += ` LIMIT ? OFFSET ?`;
+    dataValues.push(limitNum, offset);
+  }
 
   // Execute Count, Summary, and Data queries in parallel for high performance
   const [countResult, summaryResult, transactions] = await Promise.all([
