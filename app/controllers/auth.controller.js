@@ -6,14 +6,34 @@ import asyncHandler from '../utils/asyncHandler.js';
  * Extract public client IP address from headers or socket
  */
 const getClientIp = (req) => {
-  const forwarded = req.headers['x-forwarded-for'] || req.headers['x-real-ip'];
-  if (forwarded) {
-    const ips = String(forwarded).split(',');
+  const forwarded =
+    req.headers['x-forwarded-for'] ||
+    req.headers['x-real-ip'] ||
+    req.headers['cf-connecting-ip'];
+
+  let ip = forwarded;
+  if (ip && typeof ip === 'string') {
+    const ips = ip.split(',');
     if (ips.length > 0 && ips[0].trim()) {
-      return ips[0].trim();
+      ip = ips[0].trim();
     }
   }
-  return req.ip || req.socket?.remoteAddress || '127.0.0.1';
+
+  if (!ip) {
+    ip = req.ip || req.socket?.remoteAddress || '127.0.0.1';
+  }
+
+  // Normalize IPv4-mapped IPv6 (::ffff:127.0.0.1 -> 127.0.0.1) and IPv6 loopback (::1 -> 127.0.0.1)
+  if (typeof ip === 'string') {
+    if (ip.startsWith('::ffff:')) {
+      ip = ip.replace('::ffff:', '');
+    }
+    if (ip === '::1') {
+      ip = '127.0.0.1';
+    }
+  }
+
+  return ip || '127.0.0.1';
 };
 
 /**
@@ -33,7 +53,8 @@ export const register = asyncHandler(async (req, res) => {
  */
 export const login = asyncHandler(async (req, res) => {
   const ipAddress = getClientIp(req);
-  const { user, access_token, refresh_token } = await loginUser({ ...req.body, ipAddress });
+  const userAgent = req.headers['user-agent'] || null;
+  const { user, access_token, refresh_token } = await loginUser({ ...req.body, ipAddress, userAgent });
   return res.status(200).json(apiResponse(200, { user, access_token, refresh_token }, 'Login successful'));
 });
 

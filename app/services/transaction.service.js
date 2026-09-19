@@ -1,4 +1,5 @@
-import { executeQuery } from '../utils/db.js';
+import mongoose from 'mongoose';
+import Transaction from '../models/Transaction.model.js';
 import createError from '../utils/ApiError.js';
 
 /**
@@ -12,22 +13,16 @@ export const createTransaction = async ({
   remark = null,
   transaction_date
 }) => {
-  const query = `
-    INSERT INTO transactions (type, paid_to, amount, payment_mode, remark, transaction_date)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `;
-  const values = [
+  const transaction = await Transaction.create({
     type,
-    paid_to ? paid_to.trim() : null,
+    paid_to: paid_to ? paid_to.trim() : null,
     amount,
     payment_mode,
-    remark ? remark.trim() : null,
-    transaction_date
-  ];
+    remark: remark ? remark.trim() : null,
+    transaction_date: new Date(transaction_date)
+  });
 
-  const result = await executeQuery({ query, values });
-
-  return getTransactionById(result.insertId);
+  return getTransactionById(transaction._id.toString());
 };
 
 /**
@@ -37,73 +32,74 @@ export const getAllTransactions = async (queryParams = {}) => {
   const { page = 1, limit = 20, type, payment_mode, start_date, end_date, search } = queryParams;
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  // Default limit is 20 records per page as requested
   const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
   const offset = (pageNum - 1) * limitNum;
 
-  let whereClauses = ['is_deleted = 0'];
-  let values = [];
+  const filter = { is_deleted: 0 };
 
   if (type !== undefined && type !== '') {
-    whereClauses.push('type = ?');
-    values.push(parseInt(type, 10));
+    filter.type = parseInt(type, 10);
   }
 
   if (payment_mode !== undefined && payment_mode !== '') {
-    whereClauses.push('payment_mode = ?');
-    values.push(parseInt(payment_mode, 10));
+    filter.payment_mode = parseInt(payment_mode, 10);
   }
 
-  if (start_date) {
-    whereClauses.push('transaction_date >= ?');
-    values.push(start_date);
+  if (start_date || end_date) {
+    filter.transaction_date = {};
+    if (start_date) {
+      filter.transaction_date.$gte = new Date(start_date);
+    }
+    if (end_date) {
+      const endOfDay = new Date(end_date);
+      endOfDay.setHours(23, 59, 59, 999);
+      filter.transaction_date.$lte = endOfDay;
+    }
   }
 
-  if (end_date) {
-    whereClauses.push('transaction_date <= ?');
-    values.push(end_date);
+  if (search && search.trim()) {
+    const escapedSearch = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escapedSearch, 'i');
+    filter.$or = [{ paid_to: regex }, { remark: regex }];
   }
 
-  if (search) {
-    whereClauses.push('(paid_to LIKE ? OR remark LIKE ?)');
-    const searchPattern = `%${search.trim()}%`;
-    values.push(searchPattern, searchPattern);
-  }
-
-  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-
-  // Prepare SQL queries
-  const countQuery = `SELECT COUNT(*) AS total FROM transactions ${whereSql}`;
-  const summaryQuery = `
-    SELECT 
-      SUM(CASE WHEN type = 1 THEN amount ELSE 0 END) AS totalCashIn,
-      SUM(CASE WHEN type = 2 THEN amount ELSE 0 END) AS totalCashOut
-    FROM transactions
-    ${whereSql}
-  `;
   const isExport = queryParams.export === 'true' || queryParams.is_export === 'true';
 
-  let dataQuery = `
-    SELECT id, type, paid_to, amount, payment_mode, remark, transaction_date, is_deleted, createdAt, updatedAt
-    FROM transactions
-    ${whereSql}
-    ORDER BY transaction_date DESC, id DESC
-  `;
-  let dataValues = [...values];
+  let dataQuery = Transaction.find(filter).sort({ transaction_date: -1, _id: -1 });
 
   if (!isExport) {
-    dataQuery += ` LIMIT ? OFFSET ?`;
-    dataValues.push(limitNum, offset);
+    dataQuery = dataQuery.skip(offset).limit(limitNum);
   }
 
-  // Execute Count, Summary, and Data queries in parallel for high performance
-  const [countResult, summaryResult, transactions] = await Promise.all([
-    executeQuery({ query: countQuery, values }),
-    executeQuery({ query: summaryQuery, values }),
-    executeQuery({ query: dataQuery, values: dataValues })
+  const countPromise = Transaction.countDocuments(filter);
+
+  const summaryPromise = Transaction.aggregate([
+    { $match: filter },
+    {
+      $group: {
+        _id: null,
+        totalCashIn: {
+          $sum: {
+            $cond: [{ $eq: ['$type', 1] }, '$amount', 0]
+          }
+        },
+        totalCashOut: {
+          $sum: {
+            $cond: [{ $eq: ['$type', 2] }, '$amount', 0]
+          }
+        }
+      }
+    }
   ]);
 
-  const totalRecords = countResult[0]?.total || 0;
+  // Execute count, summary, and data in parallel
+  const [totalRecords, summaryResult, docs] = await Promise.all([
+    countPromise,
+    summaryPromise,
+    dataQuery.exec()
+  ]);
+
+  const transactions = docs.map((doc) => doc.toObject());
   const totalPages = Math.ceil(totalRecords / limitNum);
   const totalCashIn = Number(summaryResult[0]?.totalCashIn || 0);
   const totalCashOut = Number(summaryResult[0]?.totalCashOut || 0);
@@ -129,18 +125,17 @@ export const getAllTransactions = async (queryParams = {}) => {
  * Get single transaction by ID
  */
 export const getTransactionById = async (id) => {
-  const query = `
-    SELECT id, type, paid_to, amount, payment_mode, remark, transaction_date, is_deleted, createdAt, updatedAt
-    FROM transactions
-    WHERE id = ? AND is_deleted = 0
-  `;
-  const results = await executeQuery({ query, values: [id] });
-
-  if (results.length === 0) {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
     throw createError(404, 'Transaction not found');
   }
 
-  return results[0];
+  const transaction = await Transaction.findOne({ _id: id, is_deleted: 0 });
+
+  if (!transaction) {
+    throw createError(404, 'Transaction not found');
+  }
+
+  return transaction.toObject();
 };
 
 /**
@@ -150,23 +145,26 @@ export const updateTransaction = async (id, updatedFields) => {
   // Verify transaction exists
   await getTransactionById(id);
 
-  const allowdFields = ["type", "paid_to", "amount", "payment_mode", "remark", "transaction_date"];
-  const keys = Object.keys(updatedFields).filter(key => allowdFields.includes(key) && updatedFields[key] !== undefined);
+  const allowedFields = ['type', 'paid_to', 'amount', 'payment_mode', 'remark', 'transaction_date'];
+  const updateData = {};
 
-  if (keys.length === 0) throw createError(400, "No valid fields provided for update.");
+  for (const field of allowedFields) {
+    if (updatedFields[field] !== undefined) {
+      if (field === 'transaction_date') {
+        updateData.transaction_date = new Date(updatedFields.transaction_date);
+      } else if (typeof updatedFields[field] === 'string') {
+        updateData[field] = updatedFields[field].trim();
+      } else {
+        updateData[field] = updatedFields[field];
+      }
+    }
+  }
 
-  const setClause = keys.map(key => `${key} = ?`).join(", ");
+  if (Object.keys(updateData).length === 0) {
+    throw createError(400, 'No valid fields provided for update.');
+  }
 
-  const values = keys.map(key => updatedFields[key]);
-  values.push(id);
-
-  const updateQuery = `
-    UPDATE transactions
-    SET ${setClause}
-    WHERE id = ? AND is_deleted = 0
-  `;
-
-  await executeQuery({ query: updateQuery, values });
+  await Transaction.updateOne({ _id: id, is_deleted: 0 }, { $set: updateData });
 
   return getTransactionById(id);
 };
@@ -178,12 +176,7 @@ export const deleteTransaction = async (id) => {
   // Verify transaction exists
   await getTransactionById(id);
 
-  const query = `
-    UPDATE transactions
-    SET is_deleted = 1
-    WHERE id = ? AND is_deleted = 0
-  `;
-  await executeQuery({ query, values: [id] });
+  await Transaction.updateOne({ _id: id, is_deleted: 0 }, { $set: { is_deleted: 1 } });
 
-  return { message: 'Transaction deleted successfully', id: parseInt(id, 10) };
+  return { message: 'Transaction deleted successfully', id };
 };

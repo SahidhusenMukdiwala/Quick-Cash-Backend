@@ -1,10 +1,12 @@
+import mongoose from 'mongoose';
 import { verifyAccessToken } from '../utils/token.utils.js';
-import { executeQuery } from '../utils/db.js';
+import Session from '../models/Session.model.js';
+import User from '../models/User.model.js';
 import createError from '../utils/ApiError.js';
 import asyncHandler from '../utils/asyncHandler.js';
 
 /**
- * Authentication Middleware using session_master & user_master
+ * Authentication Middleware using sessions & users collection
  */
 export const verifyToken = asyncHandler(async (req, res, next) => {
   let token = null;
@@ -26,27 +28,31 @@ export const verifyToken = asyncHandler(async (req, res, next) => {
     throw createError(401, 'Unauthorized: Invalid or expired access token');
   }
 
-  // 2. Verify token exists in session_master table
-  const sessions = await executeQuery({
-    query: 'SELECT id FROM session_master WHERE access_token = ? AND user_id = ?',
-    values: [token, decodedPayload.id]
+  if (!mongoose.Types.ObjectId.isValid(decodedPayload.id)) {
+    throw createError(401, 'Unauthorized: Invalid token payload');
+  }
+
+  // 2. Verify token exists in sessions collection
+  const session = await Session.findOne({
+    access_token: token,
+    user_id: decodedPayload.id
   });
 
-  if (sessions.length === 0) {
+  if (!session) {
     throw createError(401, 'Session expired or logged out. Please log in again.');
   }
 
-  // 3. Verify user is active in user_master
-  const users = await executeQuery({
-    query: 'SELECT id, name, mobile, role, status FROM user_master WHERE id = ? AND is_delete = 0',
-    values: [decodedPayload.id]
-  });
+  // 3. Verify user is active in users collection
+  const user = await User.findOne({
+    _id: decodedPayload.id,
+    is_delete: 0
+  }).select('name mobile role status createdAt modifiedAt');
 
-  if (users.length === 0 || users[0].status !== 1) {
+  if (!user || user.status !== 1) {
     throw createError(401, 'User account is inactive or deleted');
   }
 
-  req.user = users[0];
+  req.user = user.toObject();
   req.token = token;
 
   next();
