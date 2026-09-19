@@ -9,6 +9,7 @@ import routes from './app/routes/index.js';
 import { errorHandler, notFoundHandler } from './app/middlewares/error.middleware.js';
 
 const app = express();
+app.set('trust proxy', 1);
 
 // Security HTTP Headers
 app.use(helmet({
@@ -64,6 +65,13 @@ if (process.env.NODE_ENV === 'development') {
 } else {
   app.use(morgan('combined'));
 }
+
+// Root & Health Check Endpoints (Handles GET and Render's HEAD / health check probes)
+app.get(['/', '/health'], (req, res) => {
+  res.status(200).json({
+    message: 'QuickCash Ledger API is healthy and operational',
+  });
+});
 
 // Central API Routes Hub
 app.use('/api', routes);

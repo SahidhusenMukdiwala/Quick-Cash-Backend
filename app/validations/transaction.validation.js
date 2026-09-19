@@ -36,7 +36,7 @@ export const createTransactionSchema = z.object({
 
 export const updateTransactionSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, 'ID must be a valid numeric ID')
+    id: z.string().regex(/^[a-fA-F0-9]{24}$/, 'ID must be a valid 24-character hexadecimal ObjectId')
   }),
   body: z
     .object({
@@ -79,6 +79,6 @@ export const updateTransactionSchema = z.object({
 
 export const transactionIdParamSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, 'ID must be a valid numeric ID')
+    id: z.string().regex(/^[a-fA-F0-9]{24}$/, 'ID must be a valid 24-character hexadecimal ObjectId')
   })
 });
